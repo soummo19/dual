@@ -1,0 +1,63 @@
+server:
+  port: 8081
+  servlet:
+    context-path: /zk-consumer-service
+  tomcat:
+    threads:
+      max: 200
+
+web:
+  error:
+    include-message: always
+
+spring:
+  application:
+    name: zk-consumer-service
+  data:
+    mongodb:
+      auto-index-creation: true
+  kafka:
+    bootstrap-servers: localhost:9094
+    security:
+      protocol: SSL
+    ssl:
+      key-store-location: classpath:certs/keyStore.jks
+      key-store-password: password
+      trust-store-location: classpath:certs/truststore.jks
+      trust-store-password: password
+    consumer:
+      group-id: zk-consumer-group
+      auto-offset-reset: earliest
+      max-poll-records: 100
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    listener:
+      ack-mode: record
+      concurrency: 3
+    topic:
+      name: 
+        zk-topic1 : zk-topic1
+
+logging:
+  level:
+    root: INFO
+    org: WARN
+    org.springframework.kafka: INFO
+
+mongodb:
+  mongoDbName: mongo-db
+  connectionString: mongodb://localhost:27017/mongo-db
+
+
+
+http-client-pool:
+  max-total: 100
+  default-max-per-route: 20
+  close-idle-connections-wait-time-secs: 50
+  request-timeout: 5000
+  default-keep-alive-millis: 20000
+  connect-timeout: 5000
+  response-timeout: 1000
