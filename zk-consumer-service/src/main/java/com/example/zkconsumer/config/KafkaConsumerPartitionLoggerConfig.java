@@ -10,33 +10,33 @@ import org.springframework.kafka.listener.ConsumerAwareRebalanceListener;
 
 import lombok.extern.slf4j.Slf4j;
 
-// @Slf4j
-// @Configuration
-// public class KafkaConsumerPartitionLoggerConfig {
+@Slf4j
+@Configuration
+public class KafkaConsumerPartitionLoggerConfig {
     
-//     @Bean
-//     public ConsumerAwareRebalanceListener consumerAwareRebalanceListener() {
-//         return new ConsumerAwareRebalanceListener(){
+    @Bean
+    public ConsumerAwareRebalanceListener consumerAwareRebalanceListener() {
+        return new ConsumerAwareRebalanceListener(){
             
-//             @Override
-//             public void onPartitionsRevokedBeforeCommit(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
-//                 log.info("Partitions revoked before commit: {}", partitions);
-//             }
+            @Override
+            public void onPartitionsRevokedBeforeCommit(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
+                log.info("Partitions revoked before commit: {}", partitions);
+            }
 
-//             @Override
-//             public void onPartitionsRevokedAfterCommit(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
-//                 log.info("Partitions revoked after commit: {}", partitions);
-//             }
+            @Override
+            public void onPartitionsRevokedAfterCommit(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
+                log.info("Partitions revoked after commit: {}", partitions);
+            }
 
-//             @Override
-//             public void onPartitionsAssigned(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
-//                 log.info("Partitions assigned: {}", partitions);
-//             }
+            @Override
+            public void onPartitionsAssigned(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
+                log.info("Partitions assigned: {}", partitions);
+            }
 
-//             @Override
-//             public void onPartitionsLost(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
-//                 log.info("Partitions lost: {}", partitions);
-//             }
-//         };
-//     }
-// }
+            @Override
+            public void onPartitionsLost(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
+                log.info("Partitions lost: {}", partitions);
+            }
+        };
+    }
+}

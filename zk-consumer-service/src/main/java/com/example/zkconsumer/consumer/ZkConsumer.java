@@ -21,7 +21,7 @@ public class ZkConsumer {
         attempts = "3",
         backOff  = @BackOff(delay = 5000, multiplier = 2.0),
         autoCreateTopics = "true",
-        // traversingCauses = "true",
+        traversingCauses = "true",
         dltStrategy = DltStrategy.FAIL_ON_ERROR
     )
     @KafkaListener(topics = "${spring.kafka.topic.name.zk-topic1}", groupId = GROUP_ID)
