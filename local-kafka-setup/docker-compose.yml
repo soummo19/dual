@@ -1,0 +1,202 @@
+name: ${COMPOSE_PROJECT_NAME:-jhc-kafka}
+
+# Two independent single-broker Kafka clusters for local development, both
+# exposed over SSL only:
+#
+#   kafka-zk    ZooKeeper used by PushPlumeConsumerService
+#   kafka-kraft KRaft     used by NotificationService
+#
+# Both brokers share ./secrets/KeyStore.jks + truststore.jks
+
+services:
+  # certificate generation ./secrets. Run with `docker compose run --rm certs`
+  certs:
+    image: ${JDK_IMAGE}
+    profiles: ["tools"]
+    working_dir: /secrets
+    entrypoint: ["bash", "/generate-certs.sh"]
+    environment:
+      STORE_PASS: ${KAFKA_SSL_PASSWORD}
+      FORCE: ${FORCE:-0}
+    volumes:
+      - ./secrets:/secrets
+      - ./generate-certs.sh:/generate-certs.sh:ro
+
+  # ZooKeeper
+  zookeeper:
+    image: ${ZK_IMAGE}
+    container_name: jhc-zookeeper
+    ports:
+      - "${ZOOKEEPER_PORT}:2181"
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_STANDALONE_ENABLED: "true"
+      ZOO_4LW_COMMANDS_WHITELIST: srvr,ruok
+    volumes:
+      - zookeeper-data:/data
+      - zookeeper-log:/datalog
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep -q imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  kafka-zk:
+    image: ${KAFKA_ZK_IMAGE}
+    container_name: jhc-kafka-zk
+    hostname: kafka-zk
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_ZK_SSL_PORT}:${KAFKA_ZK_SSL_PORT}"
+    # The apache/kafka entrypoint only knows how to boot KRaft, so start the
+    # broker directly. Static config lives in zk-broker.properties; only the
+    # .env-driven values are overridden here.
+    entrypoint: ["/opt/kafka/bin/kafka-server-start.sh", "/mnt/shared/config/zk-broker.properties"]
+    command:
+      - --override
+      - listeners=INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:${KAFKA_ZK_SSL_PORT}
+      - --override
+      - advertised.listeners=INTERNAL://kafka-zk:29092,EXTERNAL://localhost:${KAFKA_ZK_SSL_PORT}
+      - --override
+      - num.partitions=${TOPIC_PARTITIONS:-3}
+      - --override
+      - ssl.keystore.password=${KAFKA_SSL_PASSWORD}
+      - --override
+      - ssl.key.password=${KAFKA_SSL_PASSWORD}
+      - --override
+      - ssl.truststore.password=${KAFKA_SSL_PASSWORD}
+    volumes:
+      - ./secrets:/etc/kafka/secrets:ro
+      - ./zk-broker.properties:/mnt/shared/config/zk-broker.properties:ro
+      - kafka-zk-data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-zk:29092 --command-config /etc/kafka/secrets/client-ssl.properties >/dev/null 2>&1
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # Kafka KRaft Version
+  kafka-kraft:
+    image: ${KAFKA_KRAFT_IMAGE}
+    container_name: jhc-kafka-kraft
+    hostname: kafka-kraft
+    ports:
+      - "${KAFKA_KRAFT_SSL_PORT}:${KAFKA_KRAFT_SSL_PORT}"
+    environment:
+      CLUSTER_ID: ${KRAFT_CLUSTER_ID}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-kraft:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:SSL,INTERNAL:SSL,EXTERNAL:SSL
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:29093,INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:${KAFKA_KRAFT_SSL_PORT}
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-kraft:29092,EXTERNAL://localhost:${KAFKA_KRAFT_SSL_PORT}
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+      KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/KeyStore.jks
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEYSTORE_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_SSL_KEY_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/truststore.jks
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_SSL_CLIENT_AUTH: requested
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: HTTPS
+
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_NUM_PARTITIONS: ${TOPIC_PARTITIONS:-3}
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - ./secrets:/etc/kafka/secrets:ro
+      - kafka-kraft-data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-kraft:29092 --command-config /etc/kafka/secrets/client-ssl.properties >/dev/null 2>&1
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # ------------------------------------------------------------ topic seeding
+  topics-init:
+    image: ${KAFKA_KRAFT_IMAGE}
+    container_name: jhc-kafka-topics-init
+    depends_on:
+      kafka-zk:
+        condition: service_healthy
+      kafka-kraft:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      ZK_SERVICE_TOPICS: ${ZK_SERVICE_TOPICS}
+      KRAFT_SERVICE_TOPICS: ${KRAFT_SERVICE_TOPICS}
+      TOPIC_PARTITIONS: ${TOPIC_PARTITIONS:-3}
+    volumes:
+      - ./secrets:/etc/kafka/secrets:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        create() {
+          local server=$$1 topics=$$2
+          for topic in $${topics//,/ }; do
+            /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$$server" \
+              --command-config /etc/kafka/secrets/client-ssl.properties \
+              --create --if-not-exists \
+              --topic "$$topic" --partitions "$$TOPIC_PARTITIONS" --replication-factor 1
+          done
+          echo "--- topics on $$server ---"
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$$server" \
+            --command-config /etc/kafka/secrets/client-ssl.properties --list
+        }
+        create kafka-zk:29092 "$$ZK_SERVICE_TOPICS"
+        create kafka-kraft:29092 "$$KRAFT_SERVICE_TOPICS"
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    container_name: jhc-kafka-ui
+    depends_on:
+      kafka-zk:
+        condition: service_healthy
+      kafka-kraft:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_UI_PORT:-8080}:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: kafka-zk-service
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-zk:29092
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: SSL
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/truststore.jks
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/KeyStore.jks
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_KEYSTORE_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_CLUSTERS_0_PROPERTIES_SSL_KEY_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_CLUSTERS_1_NAME: kafka-kraft-notifications
+      KAFKA_CLUSTERS_1_BOOTSTRAPSERVERS: kafka-kraft:29092
+      KAFKA_CLUSTERS_1_PROPERTIES_SECURITY_PROTOCOL: SSL
+      KAFKA_CLUSTERS_1_PROPERTIES_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/truststore.jks
+      KAFKA_CLUSTERS_1_PROPERTIES_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_CLUSTERS_1_PROPERTIES_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/KeyStore.jks
+      KAFKA_CLUSTERS_1_PROPERTIES_SSL_KEYSTORE_PASSWORD: ${KAFKA_SSL_PASSWORD}
+      KAFKA_CLUSTERS_1_PROPERTIES_SSL_KEY_PASSWORD: ${KAFKA_SSL_PASSWORD}
+    volumes:
+      - ./secrets:/etc/kafka/secrets:ro
+
+volumes:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-zk-data:
+  kafka-kraft-data:

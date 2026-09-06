@@ -1,0 +1,28 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: kraft-processor-service
+  kafka:
+    bootstrap-servers: localhost:9193
+    properties:
+      security.protocol: SSL
+    ssl:
+      key-store-location: classpath:certs/kafka.keystore.jks
+      key-store-password: changeit
+      key-store-type: JKS
+      trust-store-location: classpath:certs/kafka.truststore.jks
+      trust-store-password: changeit
+      trust-store-type: JKS
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: kraft-processor-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/ordersdb
